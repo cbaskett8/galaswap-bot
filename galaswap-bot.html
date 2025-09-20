@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>GalaSwap Bot — Local signer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root{ --bg:#050505; --fg:#ff4db2; --muted:#ff9ad2; --line:#2a2a2f; --ok:#8aff8a; --warn:#ffd27a; --err:#ff7474;
+         --accent1:#ff4db2; --accent2:#b14dff; --accent3:#ff7ad1; --glow:0 0 20px rgba(255,77,178,.25),0 0 40px rgba(177,77,255,.15); }
+  *{box-sizing:border-box} ::selection{background:rgba(255,77,178,.25)} html,body{height:100%}
+  body{background:radial-gradient(1200px 600px at 10% -10%, rgba(255,77,178,.08), transparent 60%),
+                 radial-gradient(1000px 600px at 110% 0%, rgba(177,77,255,.07), transparent 60%),var(--bg);
+       color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:20px;line-height:1.5;font-variant-numeric:tabular-nums}
+  .top{position:relative;padding:14px 16px;border-radius:14px;background:linear-gradient(90deg,var(--accent1),var(--accent2));
+       color:#0b0010;font-weight:700;box-shadow:var(--glow);}
+  .top .title{font-size:18px;letter-spacing:.2px}.tag{font-size:12px;opacity:.85;margin-top:6px}.dbg{font-size:12px;margin-top:6px}
+  .ok{color:#0b3}.err{color:#ff7474}
+  .bar{height:4px;border-radius:999px;overflow:hidden;background:#140516;margin-top:8px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
+  .bar>span{display:block;height:100%;background:linear-gradient(90deg,var(--accent1),var(--accent3));width:0%;transition:width .2s linear;box-shadow:0 0 14px rgba(255,77,178,.35)}
+  .grid{display:grid;gap:14px;grid-template-columns:1fr} @media(min-width:1100px){.grid{grid-template-columns:1.2fr .8fr}}
+  .card{position:relative;background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));
+        border:1px solid var(--line);border-radius:16px;padding:14px;backdrop-filter:blur(6px);box-shadow:var(--glow);overflow:hidden}
+  .card::before{content:"";position:absolute;inset:0;pointer-events:none;border-radius:16px;z-index:0;
+    background:conic-gradient(from 180deg at 50% 50%, rgba(255,77,178,.12), rgba(177,77,255,.10), rgba(255,122,209,.10), rgba(255,77,178,.12));
+    mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor; mask-composite:exclude; padding:1px; opacity:.35; }
+  .card select,.card input,.card button,.card textarea,.card label{position:relative; z-index:5; pointer-events:auto}
+  h2,label{margin:0 0 8px} h2{font-size:16px} label{font-size:12px;color:var(--muted)} .tiny{font-size:12px;color:var(--muted)}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  input,select,button,textarea{background:#0f0f12;color:var(--fg);border:1px solid #3a3340;border-radius:12px;padding:10px 12px;font-size:14px;outline:none}
+  button{cursor:pointer;font-weight:600;letter-spacing:.2px}
+  button:hover{box-shadow:0 0 0 1px rgba(255,77,178,.35),0 0 24px rgba(255,77,178,.2)} button:active{transform:translateY(1px)}
+  .btn{background:linear-gradient(180deg,#161018,#100c11);border:1px solid rgba(255,77,178,.35)}
+  .btn-secondary{background:linear-gradient(180deg,#111113,#0d0c0f);border:1px solid rgba(177,77,255,.35)}
+  .token{border:1px solid #34303a;border-radius:12px;padding:10px;margin-bottom:10px;background:linear-gradient(180deg,#0f0e11,#0c0b0d)}
+  .tileHead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700}
+  .pass{color:#001b09;background:linear-gradient(180deg,#70ffa1,#34ff7b)}
+  .fail{color:#2a1a00;background:linear-gradient(180deg,#ffe08a,#ffc457)}
+  .maybe{color:#1a0024;background:linear-gradient(180deg,#e2b6ff,#d293ff)}
+  pre{white-space:pre-wrap;word-wrap:break-word;background:#0f0f12;border:1px solid #3a3340;border-radius:12px;padding:10px;max-height:260px;overflow:auto}
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="title">🎛️ GalaSwap Trading Helper</div>
+    <div class="tag">Build v1.13.0 — Auto-retry</div>
+    <div id="dbg" class="dbg ok">Debug: JS loaded</div>
+    <div class="tiny" id="nextRefresh" style="margin-top:6px;">Next refresh in: 60s</div>
+    <div class="bar"><span id="refreshFill" style="width:0%"></span></div>
+  </div>
+
+  <div class="grid" style="margin-top:14px;">
+    <div class="col">
+      <div class="card"><h2>Live Prices</h2><div id="prices"></div><div class="tiny" id="lastUpdate">Last update: never</div></div>
+      <div class="card"><h2>Suggestions</h2><div class="tiny" style="margin-bottom:6px;">Signals from 15-min MA + momentum.</div><div id="suggestions"></div></div>
+      <div class="card">
+        <h2>Activity Log</h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+          <button id="copyLog" class="btn">Copy snapshot</button>
+          <button id="exportCSV" class="btn-secondary">Export CSV</button>
+          <button id="clearLog" class="btn-secondary">Clear</button>
+          <span class="tiny" id="logCount">0 entries</span>
+        </div>
+        <pre id="logBox"></pre>
+      </div>
+    </div>
+
+    <div class="col">
+      <!-- Wallet -->
+      <div class="card">
+        <h2>Wallet (prep for Live)</h2>
+        <div class="tiny" style="margin-bottom:6px;">Store your <strong>address</strong> and <strong>public key (base64)</strong> locally. Never paste seed/private key.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div><label>Wallet address (client|…)</label><input id="walletAddr" placeholder="client|…" /></div>
+          <div><label>Public key (base64)</label><input id="walletPub" placeholder="A… (base64)" /></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <button id="saveWallet" class="btn">Save wallet</button>
+          <button id="getPubKey" class="btn-secondary">Get public key (auto)</button>
+          <a class="btn-secondary" href="https://connect.gala.com" target="_blank" rel="noreferrer">Open GalaConnect ↗</a>
+          <span id="walletSaved" class="tiny" style="display:none;">Saved ✓</span>
+        </div>
+        <div class="tiny" id="walletInfo" style="margin-top:8px;color:var(--muted)"></div>
+      </div>
+
+      <!-- Safety -->
+      <div class="card">
+        <h2>Safety (limits)</h2>
+        <div class="tiny" style="margin-bottom:6px;">Block bad deals and cap spend.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+          <div><label>Slippage tolerance (%)</label><input id="slipPct" type="number" min="0" step="0.1" value="1.0" /></div>
+          <div><label>Max per trade (pay token)</label><input id="maxPerTrade" type="number" min="0" step="0.000001" value="20" /></div>
+          <div><label>Daily max (same token)</label><input id="dailyMax" type="number" min="0" step="0.000001" value="50" /></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <button id="saveSafety" class="btn">Save safety</button>
+          <span id="safetySaved" class="tiny" style="display:none;">Saved ✓</span>
+        </div>
+      </div>
+
+      <!-- Tokens -->
+      <div class="card">
+        <h2>Tokens Manager</h2>
+        <label>Tokens to track</label>
+        <div class="tiny" style="margin-bottom:6px;">Format: <span class="mono">"SYMBOL": "Collection$Unit$none$none"</span>. GMUSIC has fallback.</div>
+        <textarea id="tokenMap" rows="8" class="mono" style="width:100%;">{
+  "GALA":  "GALA$Unit$none$none",
+  "GUSDC": "GUSDC$Unit$none$none",
+  "ETIME": "ETIME$Unit$none$none",
+  "GMUSIC":"GMUSIC$Unit$none$none"
+}</textarea>
+        <div id="tokenErr" class="tiny" style="color:var(--err);margin-top:6px;"></div>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+          <button id="refreshTokens" class="btn">Apply + Rebuild</button>
+        </div>
+      </div>
+
+      <!-- Trading -->
+      <div class="card">
+        <h2>Trading — Dry-Run</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div><label>I want to receive (wanted)</label><select id="wantedSym"></select></div>
+          <div><label>I will pay with (offered)</label><select id="offeredSym"></select></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <button id="findFills" class="btn">Find fills now</button>
+        </div>
+        <div class="tiny" id="fillsStatus" style="margin-top:8px;">Idle</div>
+        <div id="fillsList" style="margin-top:8px;"></div>
+        <h3 style="margin:14px 0 6px;font-size:14px;">Review & JSON (simulation)</h3>
+        <pre id="fillOut"></pre>
+        <pre id="dryRunOut"></pre>
+      </div>
+
+      <!-- Live (preview) -->
+      <div class="card">
+        <h2>Live (preview) — safe</h2>
+        <div class="tiny" style="margin-bottom:6px;">Prepares a real <span class="mono">BatchFillTokenSwap</span>. Sign locally; never paste your private key.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <button id="prepLive" class="btn">Prepare from last Review</button>
+          <button id="signLocal" class="btn-secondary">Sign via local signer</button>
+          <button id="copyCurl" class="btn-secondary">Copy cURL</button>
+          <button id="submitLive" class="btn-secondary" disabled>Submit to API</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <label class="tiny" style="align-self:center;">Auto-retry attempts</label>
+          <input id="autoRetry" type="number" min="1" max="10" value="5" style="width:90px" />
+          <button id="quickFill" class="btn">Quick Fill (auto-retry)</button>
+        </div>
+        <div class="tiny" style="margin-top:6px;">Headers</div>
+        <pre id="liveHeaders" class="mono"></pre>
+        <div class="tiny" style="margin-top:6px;">Body</div>
+        <pre id="liveBody" class="mono"></pre>
+        <div class="tiny" style="margin-top:6px;">String to sign</div>
+        <pre id="liveToSign" class="mono"></pre>
+        <div class="tiny" style="margin-top:6px;">cURL</div>
+        <pre id="liveCurl" class="mono"></pre>
+        <div class="tiny" style="margin-top:6px;">Live response</div>
+        <pre id="liveResp" class="mono"></pre>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ===== Basics ===== */
+const PRICE_API="https://dex-backend-prod1.defi.gala.com/v1/trade/price";
+const GC_BASE="https://api-galaswap.gala.com";
+const SIGNER_BASE="http://127.0.0.1:17777";
+const history={}, lastErrors={}, activityLog=[];
+const dbg=document.getElementById("dbg");
+window.onerror=(m,s,l)=>{ dbg.textContent="JS error: "+m+" @ "+l; dbg.className="dbg err"; };
+
+/* ===== Timer ===== */
+let intervalMs=60000, loopStart=Date.now();
+function startCountdown(){
+  clearInterval(window.__tick);
+  const label=document.getElementById("nextRefresh");
+  const fill=document.getElementById("refreshFill");
+  loopStart=Date.now();
+  window.__tick=setInterval(()=>{
+    const elapsed=Date.now()-loopStart;
+    const left=Math.max(0,intervalMs-elapsed);
+    const pct=Math.min(100,Math.max(0,(elapsed/intervalMs)*100));
+    if(label) label.textContent= left<=0? "Refreshing…" : `Next refresh in: ${Math.ceil(left/1000)}s`;
+    if(fill) fill.style.width=pct+"%";
+  },200);
+}
+function startLoop(){ clearInterval(window.__loop); startCountdown(); updateOnce(); window.__loop=setInterval(()=>{ startCountdown(); updateOnce(); }, intervalMs); }
+
+/* ===== Formatting + math ===== */
+function fmt(n){ return Number.isFinite(n) ? n.toFixed(6) : "—"; }
+function keepLastNMinutes(a,m=15){ const c=Date.now()-m*60*1000; return a.filter(pt=>pt.t>=c) }
+function movingAverage(a){ if(!a.length) return null; return a.reduce((x,y)=>x+y.p,0)/a.length }
+function percentDiff(a,b){ if(!Number.isFinite(a)||!Number.isFinite(b)||b===0) return 0; return ((a-b)/b)*100 }
+function simpleMomentum(a){ if(a.length<3) return 0; const last=a[a.length-1].p; const prev=a.slice(-3,-1).map(x=>x.p).sort((x,y)=>x-y); const med=prev[Math.floor(prev.length/2)]??last; return last-med }
+
+/* ===== Token storage ===== */
+const DEFAULT_TOKENS={"GALA":"GALA$Unit$none$none","GUSDC":"GUSDC$Unit$none$none","ETIME":"ETIME$Unit$none$none","GMUSIC":"GMUSIC$Unit$none$none"};
+function showTokenError(msg){ document.getElementById("tokenErr").textContent=msg||""; }
+function loadTokenTextarea(){ const saved=localStorage.getItem("galaTokenMap"); document.getElementById("tokenMap").value=saved?saved:JSON.stringify(DEFAULT_TOKENS,null,2); }
+function parseTokenTextarea(){ try{ const obj=JSON.parse(document.getElementById("tokenMap").value); if(!obj||typeof obj!=="object") throw new Error("Must be a JSON object."); return {ok:true,obj}; }catch(e){ return {ok:false,error:e.message}; } }
+function saveTokens(obj){ localStorage.setItem("galaTokenMap", JSON.stringify(obj,null,2)); document.getElementById("tokenMap").value=JSON.stringify(obj,null,2); }
+function getTokenMap(){ const p=parseTokenTextarea(); if(p.ok) return p.obj; try{ const saved=localStorage.getItem("galaTokenMap"); return saved?JSON.parse(saved):DEFAULT_TOKENS; }catch{ return DEFAULT_TOKENS; } }
+function tokenOrder(){ return Object.keys(getTokenMap()).sort((a,b)=>a.localeCompare(b)); }
+function applyTokens(){ const p=parseTokenTextarea(); if(!p.ok){ showTokenError("Invalid JSON: "+p.error); return false; } saveTokens(p.obj); showTokenError(""); populatePairSelectors(); updateOnce(); return true; }
+document.getElementById("refreshTokens").addEventListener("click", applyTokens);
+loadTokenTextarea();
+
+/* ===== Wallet store ===== */
+function loadWallet(){ try{ const w=JSON.parse(localStorage.getItem("galaWallet")||"{}"); if(w.addr) document.getElementById("walletAddr").value=w.addr; if(w.pub) document.getElementById("walletPub").value=w.pub; document.getElementById("walletInfo").textContent=w.addr?`Saved locally • ${w.addr}`:"Not saved yet"; }catch{} }
+function saveWallet(){ const addr=(document.getElementById("walletAddr").value||"").trim(); const pub=(document.getElementById("walletPub").value||"").trim(); localStorage.setItem("galaWallet", JSON.stringify({addr,pub})); document.getElementById("walletSaved").style.display="inline"; setTimeout(()=>document.getElementById("walletSaved").style.display="none", 900); document.getElementById("walletInfo").textContent=addr?`Saved locally • ${addr}`:"Not saved yet"; }
+document.getElementById("saveWallet").addEventListener("click",saveWallet);
+document.getElementById("getPubKey").addEventListener("click", async()=>{
+  const addr=(document.getElementById("walletAddr").value||"").trim();
+  if(!addr){ alert("Enter your wallet address first (client|…)"); return; }
+  try{
+    const r=await fetch(`${SIGNER_BASE}/pubkey?address=${encodeURIComponent(addr)}`);
+    const j=await r.json();
+    if(!j.publicKey){ throw new Error(j.error||"No public key"); }
+    document.getElementById("walletPub").value = j.publicKey;
+    saveWallet();
+  }catch(e){
+    alert("Could not get public key automatically.\nMake sure the signer is running (http://127.0.0.1:17777).\n"+String(e&&e.message?e.message:e));
+  }
+});
+loadWallet();
+
+/* ===== Safety store ===== */
+let safety={slipPct:1.0,maxPerTrade:20,dailyMax:50};
+function loadSafety(){ try{ const s=JSON.parse(localStorage.getItem("galaSafety")||"{}"); if(s&&typeof s==='object') safety=Object.assign(safety,s);}catch{} 
+  document.getElementById("slipPct").value=String(safety.slipPct);
+  document.getElementById("maxPerTrade").value=String(safety.maxPerTrade);
+  document.getElementById("dailyMax").value=String(safety.dailyMax);
+}
+function saveSafety(){ safety.slipPct=Number(document.getElementById("slipPct").value)||0; safety.maxPerTrade=Number(document.getElementById("maxPerTrade").value)||0; safety.dailyMax=Number(document.getElementById("dailyMax").value)||0; localStorage.setItem("galaSafety", JSON.stringify(safety)); const n=document.getElementById("safetySaved"); n.style.display="inline"; setTimeout(()=>n.style.display="none", 900); }
+document.getElementById("saveSafety").addEventListener("click",saveSafety);
+loadSafety();
+
+/* ===== Networking: prices (GMUSIC fallback) ===== */
+async function fetchPriceDirect(key){
+  const url=PRICE_API+"?token="+encodeURIComponent(key);
+  const res=await fetch(url,{headers:{"Accept":"application/json"}});
+  const txt=await res.text();
+  let json; try{ json=JSON.parse(txt);}catch{ throw new Error("Bad JSON: "+txt.slice(0,200));}
+  const val=Number(json.price ?? json.data);
+  if(!Number.isFinite(val)) throw new Error("No numeric price in response: "+txt.slice(0,200));
+  return val;
+}
+async function fetchPriceSmart(sym, keyFromMap){
+  if(sym!=="GMUSIC"){ try{ const v=await fetchPriceDirect(keyFromMap); return {ok:true,price:v}; }catch(e){ return {ok:false,error:String(e.message||e)}; } }
+  const candidates=[keyFromMap,"GMUSIC$Unit$none$none","GMusic$Unit$none$none","MUSIC$Unit$none$none"].filter((v,i,self)=>v&&self.indexOf(v)===i);
+  for(const key of candidates){ try{ const v=await fetchPriceDirect(key); return {ok:true,price:v, key}; }catch(_e){} }
+  return {ok:false,error:"unavailable"};
+}
+
+/* ===== UI: prices/suggestions ===== */
+function sparklinePath(arr,w=300,h=36){ const pts=arr.slice(-120); if(pts.length<2) return `<svg class="spark" viewBox="0 0 ${w} ${h}"></svg>`;
+  const vals=pts.map(p=>p.p); const min=Math.min(...vals), max=Math.max(...vals); const span=(max-min)||1; const step=w/(pts.length-1); let d="";
+  for(let i=0;i<pts.length;i++){ const x=i*step; const v=(1-(vals[i]-min)/span); const y=v*(h-6)+3; d+=(i?" L":"M")+x.toFixed(1)+" "+y.toFixed(1); }
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="#ff4db2" stroke-width="2"/></svg>`; }
+function renderPrices(latest){
+  const c=document.getElementById("prices"); c.innerHTML="";
+  for(const s of tokenOrder()){
+    const price=latest[s]; const err=lastErrors[s]; const arr=history[s]||[];
+    const errLine = (s==="GMUSIC" && err) ? `<div class="tiny" style="margin-top:6px;color:var(--muted)">GMUSIC price not available right now — continuing.</div>` :
+                     (err ? `<div class="tiny" style="margin-top:6px;color:var(--err)">Error: ${err}</div>` : "");
+    const d=document.createElement("div"); d.className="token";
+    d.innerHTML=`<div class="tileHead"><div><strong>${s}</strong></div><div class="mono">${fmt(price)}</div></div>${sparklinePath(arr)}${errLine}`;
+    c.appendChild(d);
+  }
+  document.getElementById("lastUpdate").textContent="Last update: "+new Date().toLocaleTimeString();
+}
+function movingAvgSuggest(sym,arr){
+  const latest=arr.length?arr[arr.length-1].p:NaN; const ma15=movingAverage(arr); const mom=simpleMomentum(arr);
+  if(!Number.isFinite(latest)||!Number.isFinite(ma15)) return {badge:"maybe",text:"Hold (warming up)",reason:`${sym}: collecting data…`,latest,ma15,mom,diff:0};
+  const diff=percentDiff(latest,ma15);
+  if(diff<=-1.0 && mom>=0) return {badge:"pass",text:"Consider BUY",reason:`${sym}: ~${Math.abs(diff).toFixed(2)}% below MA15 & momentum ≥ 0`,latest,ma15,mom,diff};
+  if(diff>=1.0 && mom<=0) return {badge:"fail",text:"Consider SELL",reason:`${sym}: ~${diff.toFixed(2)}% above MA15 & momentum ≤ 0`,latest,ma15,mom,diff};
+  return {badge:"maybe",text:"Hold",reason:`${sym}: near MA15 or unclear momentum`,latest,ma15,mom,diff};
+}
+function renderSuggestions(){
+  const b=document.getElementById("suggestions"); b.innerHTML="";
+  for(const s of tokenOrder()){
+    const arr=history[s]||[]; const base=movingAvgSuggest(s,keepLastNMinutes(arr,30));
+    const d=document.createElement("div"); d.className="token";
+    d.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><strong>${s}</strong><span class="badge ${base.badge}">${base.text}</span></div>
+      <div class="tiny mono" style="margin-top:6px;">Latest: ${fmt(base.latest)} | MA(15m): ${Number.isFinite(base.ma15)?base.ma15.toFixed(6):"…"} | Momentum: ${Number.isFinite(base.mom)?base.mom.toFixed(6):"…"} | Δ%: ${Number.isFinite(base.diff)?base.diff.toFixed(2):"…"}</div>
+      <div class="tiny" style="margin-top:6px;">${base.reason}</div>`;
+    b.appendChild(d);
+  }
+}
+
+/* ===== Update loop ===== */
+async function updateOnce(){
+  const tokens=getTokenMap(); const latest={};
+  for(const [sym,key] of Object.entries(tokens)){
+    const r=await fetchPriceSmart(sym, key);
+    if(r.ok){ lastErrors[sym]=""; latest[sym]=r.price; if(!history[sym]) history[sym]=[]; history[sym].push({t:Date.now(),p:r.price}); history[sym]=keepLastNMinutes(history[sym],30); }
+    else{ lastErrors[sym]= (sym==="GMUSIC" ? "" : r.error); latest[sym]=NaN; }
+  }
+  renderPrices(latest); renderSuggestions();
+}
+
+/* ===== Activity log ===== */
+function logAction(line){ activityLog.unshift(line); const box=document.getElementById("logBox"); box.textContent=activityLog.slice(0,200).join("\n"); document.getElementById("logCount").textContent=`${activityLog.length} entries`; }
+document.getElementById("copyLog").addEventListener("click",()=>navigator.clipboard?.writeText(document.getElementById("logBox").textContent||"(empty)"));
+document.getElementById("exportCSV").addEventListener("click",()=>{ const rows=[["time","note"], ...activityLog.map(x=>[new Date().toLocaleTimeString(), x.replaceAll(",",";")])]; const csv=rows.map(r=>r.join(",")).join("\n"); const uri="data:text/csv;charset=utf-8,"+encodeURIComponent(csv); const a=document.createElement("a"); a.href=uri; a.download="galaswap_log.csv"; a.click(); });
+document.getElementById("clearLog").addEventListener("click",()=>{ activityLog.length=0; document.getElementById("logBox").textContent=""; document.getElementById("logCount").textContent="0 entries"; });
+
+/* ===== Pair selectors ===== */
+function populatePairSelectors(){
+  const map=getTokenMap(); const wanted=document.getElementById("wantedSym"); const offered=document.getElementById("offeredSym");
+  wanted.innerHTML=""; offered.innerHTML="";
+  Object.keys(map).sort().forEach(sym=>{
+    const a=document.createElement("option"); a.value=sym; a.textContent=sym; wanted.appendChild(a);
+    const b=document.createElement("option"); b.value=sym; b.textContent=sym; offered.appendChild(b);
+  });
+  if (map["GALA"]) wanted.value="GALA"; if (map["GUSDC"]) offered.value="GUSDC";
+}
+populatePairSelectors();
+
+/* ===== Trading (Dry-Run) ===== */
+function compositeToClass(comp){ const [collection,category,type,additionalKey]=String(comp).split("$"); return {collection,category,type,additionalKey}; }
+function sumQtyInCollection(items, collection){ let s=0; (items||[]).forEach(x=>{ if(x?.tokenInstance?.collection===collection) s+=Number(x.quantity||0); }); return s; }
+const _priceCache={}; async function getUsdPriceForSymbol(sym){ if(sym in _priceCache) return _priceCache[sym]; const map=getTokenMap(); const key=map[sym]; const r=await fetchPriceSmart(sym,key); _priceCache[sym]=r.ok?r.price:NaN; return _priceCache[sym]; }
+
+async function fetchAvailableSwaps(offeredSym,wantedSym){
+  const map=getTokenMap(); const offeredKey=map[offeredSym], wantedKey=map[wantedSym]; if(!offeredKey||!wantedKey) throw new Error("Pick both tokens first.");
+  const res=await fetch(GC_BASE+"/v1/FetchAvailableTokenSwaps",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({offeredTokenClass:compositeToClass(offeredKey), wantedTokenClass:compositeToClass(wantedKey)})});
+  const json=await res.json(); if(!json||!Array.isArray(json.results)) throw new Error("Unexpected response: "+JSON.stringify(json).slice(0,200)); return json.results;
+}
+function buildFillPayloadFromSwap(swap){
+  const wanted=(swap.offered||[]).map(x=>({quantity:String(x.quantity),tokenInstance:x.tokenInstance})); // you receive maker.offered
+  const offered=(swap.wanted||[]).map(x=>({quantity:String(x.quantity),tokenInstance:x.tokenInstance})); // you pay maker.wanted
+  return { swapDtos:[{ swapRequestId:(swap.swapRequestId||"").replace(/\u0000/g,""), uses:"1", expectedTokenSwap:{ wanted, offered } }] };
+}
+
+let lastReviewedSwap = null;
+async function estimateRow(offeredSym,wantedSym, swap){
+  const payQty=sumQtyInCollection(swap.wanted,offeredSym);
+  const getQty=sumQtyInCollection(swap.offered,wantedSym);
+  const pGive=await getUsdPriceForSymbol(offeredSym);
+  const pGet=await getUsdPriceForSymbol(wantedSym);
+  let usdGive=NaN, usdGet=NaN, overpayPct=NaN;
+  if(Number.isFinite(pGive)&&Number.isFinite(pGet)){
+    usdGive=payQty*pGive; usdGet=getQty*pGet;
+    overpayPct=usdGive>0?Math.max(0,(usdGive-usdGet)/usdGive*100):0;
+  }
+  const withinPer = safety.maxPerTrade<=0 || payQty<=safety.maxPerTrade;
+  const slipOK = Number.isFinite(overpayPct) ? (overpayPct <= safety.slipPct+1e-9) : false;
+  let verdict = "maybe"; if(withinPer && slipOK) verdict="pass"; else if(!withinPer || (Number.isFinite(overpayPct)&&overpayPct>safety.slipPct)) verdict="fail";
+  return { payQty, getQty, usdGive, usdGet, overpayPct, verdict };
+}
+async function runReviewForSwap(swap,offeredSym,wantedSym){
+  const out=document.getElementById("fillOut"); const resBox=document.getElementById("dryRunOut");
+  const payload=buildFillPayloadFromSwap(swap); out.textContent=JSON.stringify(payload,null,2);
+  lastReviewedSwap = {payload, offeredSym, wantedSym};
+  const est=await estimateRow(offeredSym,wantedSym, swap);
+  const lines=[];
+  lines.push(`You'd pay ~${fmt(est.payQty)} ${offeredSym}`+(Number.isFinite(est.usdGive)?` (~$${est.usdGive.toFixed(6)})`:""));
+  lines.push(`and receive ~${fmt(est.getQty)} ${wantedSym}`+(Number.isFinite(est.usdGet)?` (~$${est.usdGet.toFixed(6)})`:""));
+  if(Number.isFinite(est.overpayPct)) lines.push(`Implied overpay ~${est.overpayPct.toFixed(2)}% (limit ≤ ${safety.slipPct}%).`);
+  if(est.payQty> safety.maxPerTrade && safety.maxPerTrade>0) lines.push(`Over max-per-trade: needs ${est.payQty} > ${safety.maxPerTrade}.`);
+  resBox.textContent = lines.join("\n"); resBox.className="mono";
+}
+async function renderFills(list,wantedSym,offeredSym){
+  const box=document.getElementById("fillsList"); const status=document.getElementById("fillsStatus"); const out=document.getElementById("fillOut"); const resBox=document.getElementById("dryRunOut");
+  box.innerHTML=""; out.textContent=""; resBox.textContent="";
+  if(!list.length){ status.innerHTML=`<span style="color:var(--warn)">No swaps found for ${wantedSym} ⇄ ${offeredSym} right now.</span>`; return; }
+  status.innerHTML=`<span style="color:var(--ok)">${Math.min(10,list.length)} shown (best first)</span>`;
+  const enriched=[]; for(const s of list.slice(0,10)){ const est=await estimateRow(offeredSym,wantedSym,s); enriched.push({swap:s,est}); }
+  enriched.forEach(({swap,est},idx)=>{
+    const div=document.createElement("div"); div.className="token";
+    const srid=(swap.swapRequestId||"").replace(/\u0000/g,"");
+    const offeredC=swap.offered?.[0]?.tokenInstance?.collection||"?"; const offeredQ=swap.offered?.[0]?.quantity||"?";
+    const wantedC=swap.wanted?.[0]?.tokenInstance?.collection||"?"; const wantedQ=swap.wanted?.[0]?.quantity||"?";
+    const vbadge = est.verdict==="pass" ? `<span class="badge pass">Likely PASS</span>` : (est.verdict==="fail" ? `<span class="badge fail">Likely FAIL</span>` : `<span class="badge maybe">Unknown</span>`);
+    const overLine = Number.isFinite(est.overpayPct) ? `Overpay ~${est.overpayPct.toFixed(2)}% (≤ ${safety.slipPct}% passes)` : `Overpay: unknown`;
+    const capLine  = (safety.maxPerTrade>0 && est.payQty>safety.maxPerTrade) ? `Over max-per-trade (${fmt(est.payQty)} > ${fmt(safety.maxPerTrade)})` : `Within caps`;
+    div.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <strong>${wantedSym} for ${offeredSym}</strong>
+        <span class="tiny mono">swapId: ${srid.slice(0,18)}…</span>
+      </div>
+      <div class="tiny mono" style="margin-top:6px;">Maker offers: ${fmt(offeredQ)} ${offeredC} &nbsp;|&nbsp; Maker wants: ${fmt(wantedQ)} ${wantedC}</div>
+      <div class="tiny mono" style="margin-top:6px;">${overLine} • ${capLine} &nbsp; ${vbadge}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"><button class="btn" data-review="${idx}">Review (preview)</button><span class="tiny">No submission in this build.</span></div>`;
+    box.appendChild(div);
+    div.querySelector("[data-review]")?.addEventListener("click", async()=>{ await runReviewForSwap(swap,offeredSym,wantedSym); });
+  });
+}
+document.getElementById("findFills").addEventListener("click", async()=>{
+  const wantedSym=document.getElementById("wantedSym").value; const offeredSym=document.getElementById("offeredSym").value;
+  const status=document.getElementById("fillsStatus"); const box=document.getElementById("fillsList");
+  status.textContent=`Searching ${wantedSym} ⇄ ${offeredSym}…`; box.innerHTML=""; document.getElementById("dryRunOut").textContent="";
+  try{ const swaps=await fetchAvailableSwaps(offeredSym,wantedSym); await renderFills(swaps,wantedSym,offeredSym); }
+  catch(e){ status.innerHTML=`<span style="color:var(--err)">Error</span> ${String(e.message||e)}`; if(String(e).includes("Failed to fetch")) status.innerHTML+=`<br/><span class="tiny">Tip: open via <span class="mono">http://localhost</span> to avoid CORS.</span>`; }
+});
+
+/* ===== Live (preview) ===== */
+function genUniqueKey(){
+  // REQUIRED by API: must start with "galaswap-operation-"
+  const b=new Uint8Array(8); crypto.getRandomValues(b);
+  const hex=Array.from(b).map(x=>x.toString(16).padStart(2,"0")).join("");
+  const stamp=Date.now().toString(36);
+  return `galaswap-operation-${stamp}-${hex}`;
+}
+function buildLiveFromLast(){
+  const w=JSON.parse(localStorage.getItem("galaWallet")||"{}");
+  if(!w.addr || !w.pub) throw new Error("Wallet address or public key missing (fill Wallet card and Save).");
+  if(!lastReviewedSwap || !lastReviewedSwap.payload) throw new Error("Click 'Review (preview)' on a swap first.");
+  const body = { signerPublicKey:w.pub, uniqueKey:genUniqueKey(), ...lastReviewedSwap.payload };
+  const headers = { "Content-Type":"application/json", "X-Wallet-Address": w.addr };
+  const toSignJSON = JSON.stringify(body);
+  return {headers, body, toSignJSON};
+}
+function renderLivePreview(pack){
+  const h=document.getElementById("liveHeaders");
+  const b=document.getElementById("liveBody");
+  const s=document.getElementById("liveToSign");
+  const c=document.getElementById("liveCurl");
+  const addr=(JSON.parse(localStorage.getItem("galaWallet")||"{}")).addr||"client|…";
+  h.textContent = JSON.stringify(pack.headers, null, 2);
+  b.textContent = JSON.stringify({...pack.body, signature:"<DER_BASE64_SIGNATURE>"}, null, 2);
+  s.textContent = pack.toSignJSON;
+  const curl = [
+    "curl -X POST \\",
+    "  -H 'Content-Type: application/json' \\",
+    `  -H 'X-Wallet-Address: ${addr}' \\`,
+    "  -d '"+JSON.stringify({...pack.body, signature:"<DER_BASE64_SIGNATURE>"})+"' \\",
+    `${GC_BASE}/v1/BatchFillTokenSwap`
+  ].join("\n");
+  c.textContent = curl;
+}
+let __lastPack=null;
+document.getElementById("prepLive").addEventListener("click",()=>{
+  const resp=document.getElementById("liveResp"); resp.textContent="";
+  try{
+    __lastPack=buildLiveFromLast();
+    renderLivePreview(__lastPack);
+    document.getElementById("submitLive").disabled=false;
+  }catch(e){
+    __lastPack=null;
+    document.getElementById("liveHeaders").textContent="";
+    document.getElementById("liveBody").textContent="";
+    document.getElementById("liveToSign").textContent="";
+    document.getElementById("liveCurl").textContent="";
+    document.getElementById("submitLive").disabled=true;
+    document.getElementById("liveResp").textContent=String(e.message||e);
+  }
+});
+document.getElementById("signLocal").addEventListener("click", async()=>{
+  const resp=document.getElementById("liveResp"); resp.textContent="";
+  if(!__lastPack){ alert("Click 'Prepare from last Review' first."); return; }
+  try{
+    const r=await fetch(`${SIGNER_BASE}/sign`,{
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ payload: __lastPack.body })
+    });
+    const j=await r.json();
+    if(!j.signature){ throw new Error(j.error || "No signature from signer"); }
+    const withSig={...__lastPack.body, signature:j.signature};
+    document.getElementById("liveBody").textContent = JSON.stringify(withSig,null,2);
+    const addr=(JSON.parse(localStorage.getItem("galaWallet")||"{}")).addr||"client|…";
+    const curl = [
+      "curl -X POST \\",
+      "  -H 'Content-Type: application/json' \\",
+      `  -H 'X-Wallet-Address: ${addr}' \\`,
+      "  -d '"+JSON.stringify(withSig)+"' \\",
+      `${GC_BASE}/v1/BatchFillTokenSwap`
+    ].join("\n");
+    document.getElementById("liveCurl").textContent = curl;
+    logAction("[LIVE] Signature received from local signer.");
+  }catch(e){
+    document.getElementById("liveResp").textContent = "Sign error: "+String(e&&e.message?e.message:e);
+  }
+});
+document.getElementById("copyCurl").addEventListener("click",()=>{
+  const c=document.getElementById("liveCurl").textContent||"";
+  if(!c){ alert("Nothing to copy yet — click 'Prepare…' then 'Sign via local signer'."); return; }
+  navigator.clipboard?.writeText(c);
+});
+document.getElementById("submitLive").addEventListener("click", async()=>{
+  const resp=document.getElementById("liveResp"); resp.textContent="";
+  const bodyTxt=document.getElementById("liveBody").textContent||"";
+  let body; try{ body=JSON.parse(bodyTxt); }catch{ resp.textContent="No signed body yet — click 'Sign via local signer' first."; return; }
+  try{
+    const addr=(JSON.parse(localStorage.getItem("galaWallet")||"{}")).addr||"";
+    const res=await fetch(`${GC_BASE}/v1/BatchFillTokenSwap`,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-Wallet-Address":addr},
+      body:JSON.stringify(body)
+    });
+    const txt=await res.text(); resp.textContent = txt;
+  }catch(e){
+    resp.textContent = "Error: "+String(e&&e.message?e.message:e);
+  }
+});
+
+/* ===== Quick Fill (auto-retry) ===== */
+async function pickFirstPassing(swaps, offeredSym, wantedSym){
+  for(const s of swaps){
+    const est=await estimateRow(offeredSym,wantedSym,s);
+    if(est.verdict==='pass') return s;
+  }
+  return null;
+}
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+document.getElementById("quickFill").addEventListener("click", async()=>{
+  const liveResp=document.getElementById("liveResp");
+  liveResp.textContent="Auto-fill starting…";
+  const wantedSym=document.getElementById("wantedSym").value;
+  const offeredSym=document.getElementById("offeredSym").value;
+  let attempts = Number(document.getElementById("autoRetry").value)||5;
+  attempts = Math.max(1, Math.min(10, attempts));
+
+  for(let i=1;i<=attempts;i++){
+    try{
+      liveResp.textContent=`Attempt ${i}/${attempts}: fetching swaps…`;
+      const swaps=await fetchAvailableSwaps(offeredSym,wantedSym);
+      if(!swaps.length){ liveResp.textContent="No swaps available."; return; }
+      const candidate = await pickFirstPassing(swaps.slice(0,10), offeredSym, wantedSym);
+      if(!candidate){ liveResp.textContent="No safe swaps (based on your Safety limits)."; return; }
+
+      await runReviewForSwap(candidate,offeredSym,wantedSym);
+
+      // Prepare
+      const pack = (__lastPack = buildLiveFromLast());
+      renderLivePreview(pack);
+
+      // Sign
+      const signRes = await fetch(`${SIGNER_BASE}/sign`,{
+        method:"POST", headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ payload: pack.body })
+      });
+      const signJson = await signRes.json();
+      if(!signJson.signature){ throw new Error(signJson.error||"No signature"); }
+
+      const withSig={...pack.body, signature:signJson.signature};
+      document.getElementById("liveBody").textContent = JSON.stringify(withSig,null,2);
+      const addr=(JSON.parse(localStorage.getItem("galaWallet")||"{}")).addr||"client|…";
+      const curl = [
+        "curl -X POST \\",
+        "  -H 'Content-Type: application/json' \\",
+        `  -H 'X-Wallet-Address: ${addr}' \\`,
+        "  -d '"+JSON.stringify(withSig)+"' \\",
+        `${GC_BASE}/v1/BatchFillTokenSwap`
+      ].join("\n");
+      document.getElementById("liveCurl").textContent = curl;
+
+      liveResp.textContent=`Attempt ${i}/${attempts}: submitting…`;
+      const res=await fetch(`${GC_BASE}/v1/BatchFillTokenSwap`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json","X-Wallet-Address":addr},
+        body:JSON.stringify(withSig)
+      });
+      const txt=await res.text();
+      liveResp.textContent=txt;
+
+      if(txt.includes("SWAP_ALREADY_USED")){
+        liveResp.textContent += `\nSwap was already used — retrying…`;
+        await sleep(400);
+        continue;
+      }
+      // success or other final error; stop the loop
+      return;
+    }catch(e){
+      liveResp.textContent = `Auto-fill error: ${String(e&&e.message?e.message:e)}`;
+      return;
+    }
+  }
+  liveResp.textContent += `\nGave up after ${attempts} attempts.`;
+});
+
+/* ===== Boot ===== */
+function populatePairSelectors(){ const map=getTokenMap(); const wanted=document.getElementById("wantedSym"); const offered=document.getElementById("offeredSym"); wanted.innerHTML=""; offered.innerHTML=""; Object.keys(map).sort().forEach(sym=>{ const a=document.createElement("option"); a.value=sym; a.textContent=sym; wanted.appendChild(a); const b=document.createElement("option"); b.value=sym; b.textContent=sym; offered.appendChild(b); }); if(map["GALA"]) wanted.value="GALA"; if(map["GUSDC"]) offered.value="GUSDC"; }
+populatePairSelectors();
+let loopInitDone=false; function boot(){ if(loopInitDone) return; loopInitDone=true; startCountdown(); startLoop(); }
+document.addEventListener("visibilitychange", boot); boot();
+</script>
+</body>
+</html>
